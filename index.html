@@ -196,16 +196,17 @@ html, body { background:#f2f2f7; color:#1c1c1e; font-family:'Playfair Display',s
 }
 .log-ex-header.no-border { border-bottom:none; }
 .log-ex-name { flex:1; font-size:16px; font-weight:400; color:var(--text); }
+.log-ex-name-input { flex:1; font-size:16px; font-weight:400; color:var(--text); border:none; border-bottom:1.5px solid var(--accent); background:transparent; font-family:'Playfair Display',serif; padding:2px 0; outline:none; width:100%; }
 .log-ex-header-right { display:flex; align-items:center; gap:10px; }
 .log-status { width:26px; height:26px; border-radius:50%; border:2px solid var(--border); display:flex; align-items:center; justify-content:center; font-size:13px; transition:all 0.2s; }
 .log-status.done { background:var(--accent); border-color:var(--accent); color:#fff; }
 
 .log-sets-wrap { padding:0 20px 14px; border-bottom:0.5px solid var(--border); }
 .log-sets-wrap.hidden { display:none; }
-.log-set-labels { display:grid; grid-template-columns:28px 1fr 1fr 36px; gap:8px; padding:4px 0 6px; }
+.log-set-labels { display:grid; grid-template-columns:20px 1fr 1fr 36px 24px; gap:8px; padding:4px 0 6px; }
 .log-set-label { font-size:11px; color:var(--text-3); text-align:center; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
 .log-set-label:first-child { text-align:left; }
-.log-set-row { display:grid; grid-template-columns:28px 1fr 1fr 36px; gap:8px; align-items:center; padding:5px 0; border-bottom:0.5px solid var(--border); }
+.log-set-row { display:grid; grid-template-columns:20px 1fr 1fr 36px 24px; gap:8px; align-items:center; padding:5px 0; border-bottom:0.5px solid var(--border); }
 .log-set-row:last-child { border-bottom:none; }
 .set-num { font-size:13px; color:var(--text-3); font-weight:500; }
 .set-input {
@@ -626,6 +627,28 @@ document.getElementById('prog-notes').innerHTML = `
 <div class="row-detail" id="n9"><div class="detail-cue">Come back and report what felt easy, hard, or painful and whether left-right asymmetry is improving. Month 2 adds load on posterior chain, cable lunges, and padel rotational work.</div></div>
 </div></div>`;
 
+// ── AUDIO ──
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    // Three ascending bell tones
+    [[523, 0, 0.15], [659, 0.18, 0.15], [784, 0.36, 0.5]].forEach(([freq, delay, dur]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t + delay);
+      gain.gain.setValueAtTime(0, t + delay);
+      gain.gain.linearRampToValueAtTime(0.7, t + delay + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + delay + dur);
+      osc.start(t + delay);
+      osc.stop(t + delay + dur + 0.1);
+    });
+  } catch(e) { console.log('Audio error:', e); }
+}
+
 // ── TIMER ──
 const CIRC = 553;
 let timerTotal = 60, timerRemaining = 60, timerInterval = null, timerPaused = false;
@@ -646,8 +669,9 @@ function startTimer(exName, setInfo) {
     if (timerRemaining <= 0) {
       clearInterval(timerInterval);
       if (navigator.vibrate) navigator.vibrate([200,100,200]);
+      playDing();
       document.getElementById('timerDisplay').textContent = 'Go!';
-      setTimeout(dismissTimer, 1200);
+      setTimeout(dismissTimer, 1500);
     }
   }, 1000);
 }
@@ -731,12 +755,12 @@ function renderLog() {
     const hasNotes = ex.cue || ex.note;
     wrap.innerHTML = `
       <div class="log-ex-header" onclick="toggleLogEx('${ex.id}','${key}')">
-        <div class="log-ex-name">${ex.name}</div>
+        <div class="log-ex-name" id="exname-${ex.id}" onclick="event.stopPropagation();editExName('${key}','${ex.id}')" title="Tap to rename">${getExName(key, ex.id, ex.name)}</div>
         <div class="log-ex-header-right">
           <button class="row-video" onclick="event.stopPropagation();window.open('${url}','_blank')">
             <svg viewBox="0 0 24 24"><path d="M10 8l6 4-6 4V8z" fill="#ff3b30"/><rect x="2" y="4" width="20" height="16" rx="3" fill="none" stroke="#ff3b30" stroke-width="1.5"/></svg>
           </button>
-          <div class="log-status${allDone?' done':''}" id="lst-${ex.id}">✓</div>
+          <button class="log-status${allDone?' done':''}" id="lst-${ex.id}" onclick="event.stopPropagation();toggleAllSets('${key}','${ex.id}')">✓</button>
         </div>
       </div>
       ${hasNotes ? `<div class="log-notes-wrap${st.open?'':' hidden'}" id="lnotes-${ex.id}">
@@ -745,9 +769,10 @@ function renderLog() {
       </div>` : ''}
       <div class="log-sets-wrap${st.open?'':' hidden'}" id="lsets-${ex.id}">
         <div class="log-set-labels">
-          <div class="log-set-label">Set</div>
+          <div class="log-set-label"></div>
           <div class="log-set-label">kg</div>
           <div class="log-set-label">Reps</div>
+          <div class="log-set-label"></div>
           <div class="log-set-label"></div>
         </div>
         ${setsHtml}
@@ -781,6 +806,65 @@ function toggleSetDone(key,exId,setIdx) {
     timerTotal = 60;
     startTimer(ex.name, 'Set '+(setIdx+1)+' of '+logData[key][exId].sets.length+' done');
   }
+}
+
+// ── EXERCISE NAME EDITING ──
+const exNameOverrides = {};
+
+function getExName(key, exId, defaultName) {
+  return (exNameOverrides[key] && exNameOverrides[key][exId]) || defaultName;
+}
+
+function editExName(key, exId) {
+  const el = document.getElementById('exname-'+exId);
+  if (!el || el.querySelector('input')) return;
+  const currentName = el.textContent;
+  el.innerHTML = '';
+  const input = document.createElement('input');
+  input.className = 'log-ex-name-input';
+  input.value = currentName;
+  input.maxLength = 60;
+  el.appendChild(input);
+  input.focus();
+  input.select();
+  function save() {
+    const newName = input.value.trim() || currentName;
+    if (!exNameOverrides[key]) exNameOverrides[key] = {};
+    exNameOverrides[key][exId] = newName;
+    el.innerHTML = newName;
+    el.onclick = function(e) { e.stopPropagation(); editExName(key, exId); };
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); } });
+}
+
+function toggleAllSets(key, exId) {
+  const st = logData[key][exId];
+  const allDone = st.sets.every(s => s.done);
+  // if all done, untick all; if any undone, tick all
+  const newState = !allDone;
+  st.sets.forEach((s, i) => {
+    s.done = newState;
+    const btn = document.getElementById('stk-'+exId+'-'+i);
+    if (btn) btn.classList.toggle('done', newState);
+  });
+  const stat = document.getElementById('lst-'+exId);
+  if (stat) stat.classList.toggle('done', newState);
+  // fire timer once if marking all done
+  if (newState) {
+    const ex = Object.values(EXERCISES).flat().find(e => e.id === exId);
+    if (ex && !ex.isWarmup) {
+      timerTotal = 60;
+      startTimer(ex.name, 'All sets complete');
+    }
+  }
+}
+
+function deleteSet(key, exId, setIdx) {
+  if (logData[key][exId].sets.length <= 1) { showToast('Need at least one set'); return; }
+  logData[key][exId].sets.splice(setIdx, 1);
+  logData[key][exId].open = true;
+  renderLog();
 }
 
 function addSet(key,exId) {

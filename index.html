@@ -271,6 +271,11 @@ html, body { background:#f2f2f7; color:#1c1c1e; font-family:'Playfair Display',s
 .t-skip { font-size:15px; color:var(--text-3); background:none; border:none; cursor:pointer; font-family:'Playfair Display',serif; padding:8px 20px; }
 .t-set-info { font-size:13px; color:var(--text-3); margin-top:4px; }
 
+/* ── MINI TIMER ── */
+.mini-timer { position:fixed; bottom:calc(62px + var(--safe-bot)); left:12px; right:12px; background:var(--text); color:#fff; border-radius:14px; padding:12px 16px; display:flex; align-items:center; gap:10px; z-index:400; cursor:pointer; box-shadow:0 4px 24px rgba(0,0,0,0.18); }
+.mini-timer-name { flex:1; font-size:13px; opacity:0.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:'Playfair Display',serif; }
+.mini-timer-time { font-size:20px; font-weight:300; font-family:'Cormorant Garamond',serif; min-width:48px; text-align:right; }
+.mini-timer-close { background:none; border:none; color:#fff; font-size:16px; opacity:0.55; cursor:pointer; padding:0 0 0 8px; line-height:1; }
 /* ── TOAST ── */
 .toast { position:fixed; bottom:calc(70px + var(--safe-bot)); left:50%; transform:translateX(-50%) translateY(10px); background:#1c1c1e; color:#fff; padding:10px 20px; border-radius:99px; font-size:14px; font-weight:500; opacity:0; transition:all 0.3s; z-index:600; white-space:nowrap; pointer-events:none; }
 .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
@@ -404,10 +409,18 @@ html, body { background:#f2f2f7; color:#1c1c1e; font-family:'Playfair Display',s
     <button class="t-adj" onclick="adjustTimer(30)">+30s</button>
   </div>
   <div class="t-set-info" id="timerSetInfo"></div>
-  <button class="t-skip" onclick="dismissTimer()">Skip rest</button>
+  <div style="display:flex;gap:24px;">
+    <button class="t-skip" onclick="minimiseTimer()">Minimise</button>
+    <button class="t-skip" onclick="dismissTimer()">Skip</button>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="mini-timer" id="miniTimer" style="display:none" onclick="maximiseTimer()">
+  <div class="mini-timer-name" id="miniTimerName"></div>
+  <div class="mini-timer-time" id="miniTimerTime">1:00</div>
+  <button class="mini-timer-close" onclick="event.stopPropagation();dismissTimer()">✕</button>
+</div>
 
 <script>
 const EXERCISES = {
@@ -628,58 +641,91 @@ document.getElementById('prog-notes').innerHTML = `
 </div></div>`;
 
 // ── AUDIO ──
+let audioCtx = null;
+
+function unlockAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
+  } catch(e) {}
+}
+
 function playDing() {
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const t = ctx.currentTime;
-    // Three ascending bell tones
-    [[523, 0, 0.15], [659, 0.18, 0.15], [784, 0.36, 0.5]].forEach(([freq, delay, dur]) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    [[523.25, 0, 0.9, 0.5], [659.25, 0.6, 0.9, 0.45], [783.99, 1.2, 1.2, 0.6]].forEach(([freq, delay, dur, vol]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
       osc.connect(gain);
-      gain.connect(ctx.destination);
+      gain.connect(audioCtx.destination);
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, t + delay);
       gain.gain.setValueAtTime(0, t + delay);
-      gain.gain.linearRampToValueAtTime(0.7, t + delay + 0.01);
+      gain.gain.linearRampToValueAtTime(vol, t + delay + 0.015);
+      gain.gain.setValueAtTime(vol * 0.6, t + delay + 0.12);
       gain.gain.exponentialRampToValueAtTime(0.001, t + delay + dur);
       osc.start(t + delay);
-      osc.stop(t + delay + dur + 0.1);
+      osc.stop(t + delay + dur + 0.05);
     });
   } catch(e) { console.log('Audio error:', e); }
 }
 
+document.addEventListener('touchstart', unlockAudio, { once: true });
+document.addEventListener('click', unlockAudio, { once: true });
+
 // ── TIMER ──
 const CIRC = 553;
 let timerTotal = 60, timerRemaining = 60, timerInterval = null, timerPaused = false;
+let timerEndTime = null, timerMinimised = false;
 
 function startTimer(exName, setInfo) {
   timerRemaining = timerTotal;
   timerPaused = false;
+  timerMinimised = false;
+  timerEndTime = Date.now() + timerTotal * 1000;
   document.getElementById('timerExName').textContent = exName;
   document.getElementById('timerSetInfo').textContent = setInfo;
+  document.getElementById('miniTimerName').textContent = exName;
   document.getElementById('timerPauseBtn').textContent = '⏸';
   updateTimerDisplay();
   document.getElementById('timerOverlay').classList.add('visible');
+  document.getElementById('miniTimer').style.display = 'none';
   clearInterval(timerInterval);
-  timerInterval = setInterval(() => {
-    if (timerPaused) return;
-    timerRemaining--;
-    updateTimerDisplay();
-    if (timerRemaining <= 0) {
-      clearInterval(timerInterval);
-      if (navigator.vibrate) navigator.vibrate([200,100,200]);
-      playDing();
+  timerInterval = setInterval(tickTimer, 500);
+}
+
+function tickTimer() {
+  if (timerPaused) return;
+  const remaining = Math.max(0, Math.round((timerEndTime - Date.now()) / 1000));
+  timerRemaining = remaining;
+  updateTimerDisplay();
+  if (timerRemaining <= 0) {
+    clearInterval(timerInterval);
+    if (navigator.vibrate) navigator.vibrate([200,100,200]);
+    playDing();
+    if (timerMinimised) {
+      document.getElementById('miniTimerTime').textContent = 'Go!';
+      setTimeout(() => { document.getElementById('miniTimer').style.display = 'none'; timerMinimised = false; }, 2000);
+    } else {
       document.getElementById('timerDisplay').textContent = 'Go!';
       setTimeout(dismissTimer, 1500);
     }
-  }, 1000);
+  }
 }
 
 function updateTimerDisplay() {
   const m = Math.floor(timerRemaining/60), s = timerRemaining%60;
-  document.getElementById('timerDisplay').textContent = m+':'+String(s).padStart(2,'0');
-  const offset = CIRC * (1 - timerRemaining/timerTotal);
+  const str = m+':'+String(s).padStart(2,'0');
+  document.getElementById('timerDisplay').textContent = str;
+  document.getElementById('miniTimerTime').textContent = str;
+  const offset = CIRC * (1 - timerRemaining / timerTotal);
   const ring = document.getElementById('timerRing');
   ring.style.strokeDashoffset = offset;
   ring.style.stroke = timerRemaining <= 10 ? 'var(--red)' : 'var(--accent)';
@@ -687,19 +733,35 @@ function updateTimerDisplay() {
 
 function toggleTimerPause() {
   timerPaused = !timerPaused;
+  if (!timerPaused) timerEndTime = Date.now() + timerRemaining * 1000;
   document.getElementById('timerPauseBtn').textContent = timerPaused ? '▶' : '⏸';
 }
 
 function adjustTimer(d) {
-  timerRemaining = Math.max(5, timerRemaining+d);
-  timerTotal = Math.max(5, timerTotal+d);
+  timerRemaining = Math.max(5, timerRemaining + d);
+  timerTotal = Math.max(5, timerTotal + d);
+  timerEndTime = Date.now() + timerRemaining * 1000;
   updateTimerDisplay();
+}
+
+function minimiseTimer() {
+  timerMinimised = true;
+  document.getElementById('timerOverlay').classList.remove('visible');
+  document.getElementById('miniTimer').style.display = 'flex';
+}
+
+function maximiseTimer() {
+  timerMinimised = false;
+  document.getElementById('miniTimer').style.display = 'none';
+  document.getElementById('timerOverlay').classList.add('visible');
 }
 
 function dismissTimer() {
   clearInterval(timerInterval);
   timerTotal = 60;
+  timerMinimised = false;
   document.getElementById('timerOverlay').classList.remove('visible');
+  document.getElementById('miniTimer').style.display = 'none';
 }
 
 // ── LOG ──
@@ -755,7 +817,7 @@ function renderLog() {
     const hasNotes = ex.cue || ex.note;
     wrap.innerHTML = `
       <div class="log-ex-header" onclick="toggleLogEx('${ex.id}','${key}')">
-        <div class="log-ex-name" id="exname-${ex.id}" onclick="event.stopPropagation();editExName('${key}','${ex.id}')" title="Tap to rename">${getExName(key, ex.id, ex.name)}</div>
+        <div class="log-ex-name" id="exname-${ex.id}" data-key="${key}" data-exid="${ex.id}">${getExName(key, ex.id, ex.name)}</div>
         <div class="log-ex-header-right">
           <button class="row-video" onclick="event.stopPropagation();window.open('${url}','_blank')">
             <svg viewBox="0 0 24 24"><path d="M10 8l6 4-6 4V8z" fill="#ff3b30"/><rect x="2" y="4" width="20" height="16" rx="3" fill="none" stroke="#ff3b30" stroke-width="1.5"/></svg>
@@ -780,6 +842,7 @@ function renderLog() {
       </div>`;
     c.appendChild(wrap);
   });
+  requestAnimationFrame(attachLongPress);
 }
 
 function toggleLogEx(exId, key) {
@@ -836,6 +899,21 @@ function editExName(key, exId) {
   }
   input.addEventListener('blur', save);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { input.blur(); } });
+}
+
+function attachLongPress() {
+  document.querySelectorAll('.log-ex-name[data-exid]').forEach(el => {
+    if (el._lpAttached) return;
+    el._lpAttached = true;
+    let timer = null;
+    el.addEventListener('touchstart', () => {
+      timer = setTimeout(() => {
+        editExName(el.dataset.key, el.dataset.exid);
+      }, 600);
+    }, { passive: true });
+    el.addEventListener('touchend', () => clearTimeout(timer));
+    el.addEventListener('touchmove', () => clearTimeout(timer));
+  });
 }
 
 function toggleAllSets(key, exId) {
